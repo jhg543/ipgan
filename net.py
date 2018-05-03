@@ -1,6 +1,5 @@
 import torchvision.models as models
 import torch
-import summary
 import torch.nn as nn
 import math
 
@@ -141,7 +140,7 @@ class PixelNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        return x * torch.rsqrt((torch.mean(x ** 2, dim=1, keepdim=True) + 1e-8))
+        return x * torch.rsqrt(torch.mean(x ** 2, dim=1, keepdim=True) + 1e-8)
 
     def __repr__(self):
         return self.__class__.__name__ + '(eps = %s)' % (self.eps)
@@ -261,17 +260,25 @@ class NetDiscriminator(nn.Module):
 
 
 if __name__ == "__main__":
+    from tensorboardX import SummaryWriter
+
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("+++++NetG+++++")
     m = NetGenerator(id_size=4)
     m = m.to(device)
-    print(m)
-    m(torch.empty(2,512,4,4,device=device),torch.empty(2,1024,device=device))
-    #summary.summary(m, [(512, 4, 4), (1024,)])
+    input = (torch.empty(2, 512, 4, 4, device=device), torch.empty(2, 1024, device=device))
+    with SummaryWriter(comment='NetG') as w:
+        w.add_graph(m, input)
+    # print(m)
+    # m(*input)
+    # summary.summary(m, [(512, 4, 4), (1024,)])
     print("+++++NetD+++++")
     m = NetDiscriminator()
     m = m.to(device)
-    print(m)
-    m(torch.empty(2, 3, 128, 128, device=device))
-    #summary.summary(m, (3, 128, 128))
+    input = (torch.empty(2, 3, 128, 128, device=device),)
+    with SummaryWriter(comment='NetD') as w:
+        w.add_graph(m, input)
 
+    # print(m)
+    # m(*input)
+    # summary.summary(m, (3, 128, 128))
