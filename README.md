@@ -1,1 +1,5 @@
 # ipgan
+
+torch
+tensorboardX
+
