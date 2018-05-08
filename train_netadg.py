@@ -40,7 +40,11 @@ args = parser.parse_args()
 
 
 def main():
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda:0")
+        torch.backends.cudnn.benchmark = True
+    else:
+        device = torch.device("cpu")
 
     net_i = networks.NetIdentifierResNet34()
     net_a = networks.NetAttributeResNet34()
