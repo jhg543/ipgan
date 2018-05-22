@@ -1,21 +1,21 @@
-import time
 import argparse
 import os
+import time
+from contextlib import closing
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
+from torchvision.utils import make_grid
 
 import net as networks
-import torch.optim as optim
-import torch.nn as nn
-import torch
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-from torch.autograd import grad
+import utils
 from utils import AverageMeter
 from utils import MultiStepStatisticCollector
 from utils import load_nets
 from utils import save_nets
-import utils
-from torchvision.utils import make_grid
-from contextlib import closing
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
@@ -131,7 +131,7 @@ def train(train_sampler, nets, stat_log):
         metric_gen, img_gen = train_onebatch(train_sampler, nets, True, log_img)
 
         for marker, metric in [('rec', metric_rec), ('gen', metric_gen)]:
-            loss_rec, loss_gd, loss_gc, loss_critic, loss_n01, loss_gp, batch_time = metric
+            loss_rec, loss_gd, loss_gc, loss_net_d, loss_n01, batch_time = metric
             if i % args.print_freq == 0:
                 print(("batch={} type={} loss_rec={} "
                        "loss_gd={} loss_gc={} "
@@ -143,7 +143,7 @@ def train(train_sampler, nets, stat_log):
                                 {'loss_rec': loss_rec, 'loss_gd': loss_gd,
                                  'loss_gc': loss_gc})
             stat_log.add_scalar('train/loss_d_' + marker,
-                                {'loss_critic': loss_critic, 'loss_gp': loss_gp})
+                                {'loss_net_d': loss_net_d})
             stat_log.add_scalar('train/batchtime_' + marker, batch_time)
 
         if log_img:
@@ -197,33 +197,20 @@ def train_onebatch(train_sampler, nets, is_gen, log_img=False):
     optimizer_d.zero_grad()
     d_score_g = net_d(img_g)[0]
     d_score_a = net_d(img_a)[0]
-    loss_critic = torch.mean(d_score_g) - torch.mean(d_score_a)
-    loss_gp = 10 * calculate_loss_gp(img_g, img_a, net_d)
-    loss_net_d = loss_critic + loss_gp
+    loss_critic_hinge = torch.mean(nn.functional.relu(1.0+d_score_g)) + torch.mean(nn.functional.relu(1.0-d_score_a))
+    loss_net_d = loss_critic_hinge
     loss_net_d.backward()
     optimizer_a.step()
     optimizer_g.step()
     optimizer_d.step()
     batch_time = time.time() - start_batch_time
-    losses = [loss_rec, loss_gd, loss_gc, loss_critic, loss_n01, loss_gp]
+    losses = [loss_rec, loss_gd, loss_gc, loss_net_d, loss_n01]
     metrics = [loss.item() for loss in losses]
     metrics.append(batch_time)
     img = None
     if log_img:
         img = make_grid_3(img_s, img_a, img_g)
     return metrics, img
-
-
-def calculate_loss_gp(img_g, img_a, model):
-    t = torch.rand(1, dtype=img_g.dtype, layout=img_g.layout, device=img_g.device)
-    img_t = img_g * t + img_a * (1 - t)
-    img_t.requires_grad_()
-    d_score_t = model(img_t)[0]
-    gradients = grad(outputs=d_score_t, inputs=img_t,
-                     grad_outputs=torch.ones_like(d_score_t),
-                     create_graph=True)[0]
-    gp = ((gradients.norm(p=2, dim=1) - 1) ** 2).mean()
-    return gp
 
 
 def validate_onebatch(val_sampler, nets, is_gen, log_img=False):
