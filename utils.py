@@ -1,6 +1,7 @@
-from tensorboardX import SummaryWriter
 import os
+
 import torch
+from tensorboardX import SummaryWriter
 
 
 class AverageMeter(object):
@@ -51,6 +52,7 @@ def save_nets(nets, info, folder):
     :param folder:
     :return:
     """
+    os.makedirs(folder, exist_ok=True)
     for net_name, v in nets.items():
         if 'optimizer' in v:
             model = v['model']
@@ -82,13 +84,13 @@ class MySampler:
     def next(self):
         try:
             b = next(self.iterator)
-            size = b.size(0)
+            size = b[0].size(0)
             if size != self.batch_size:
-                train_iter = iter(self.iterator)
-                b = next(train_iter)
+                self.iterator = iter(self.loader)
+                b = next(self.iterator)
         except StopIteration:
-            train_iter = iter(self.iterator)
-            b = next(train_iter)
+            self.iterator = iter(self.loader)
+            b = next(self.iterator)
         return b
 
     def len_samples(self):

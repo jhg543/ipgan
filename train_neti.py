@@ -1,17 +1,18 @@
-import time
 import argparse
 import os
+import shutil
+import time
+from contextlib import closing
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
 
 import net
-import torch.optim as optim
-import torch.nn as nn
-import torch
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 from utils import AverageMeter
 from utils import MultiStepStatisticCollector
-import shutil
-from contextlib import closing
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
@@ -36,33 +37,6 @@ args = parser.parse_args()
 
 
 def main():
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    net_i = net.NetIdentifierResNet34()
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        net_i = nn.DataParallel(net_i)
-
-    net_i.to(device)
-
-    loss_i = nn.CrossEntropyLoss()
-    optimizer_i = optim.Adam(net_i.parameters())
-
-    best_prec1 = 0
-
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            net_i.load_state_dict(checkpoint['state_dict'])
-            optimizer_i.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
     # Data loading code
     traindir = os.path.join(args.data, 'train')
     valdir = os.path.join(args.data, 'val')
@@ -91,6 +65,33 @@ def main():
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    net_i = net.NetIdentifierResNet34(num_classes=len(train_dataset.classes))
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        net_i = nn.DataParallel(net_i)
+
+    net_i.to(device)
+
+    loss_i = nn.CrossEntropyLoss()
+    optimizer_i = optim.Adam(net_i.parameters())
+
+    best_prec1 = 0
+
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            checkpoint = torch.load(args.resume)
+            args.start_epoch = checkpoint['epoch']
+            best_prec1 = checkpoint['best_prec1']
+            net_i.load_state_dict(checkpoint['state_dict'])
+            optimizer_i.load_state_dict(checkpoint['optimizer'])
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
+
     if args.evaluate:
         validate(val_loader, net_i, device, loss_i)
         return
@@ -108,7 +109,6 @@ def main():
             best_prec1 = max(prec1, best_prec1)
             save_checkpoint({
                 'epoch': epoch + 1,
-                'arch': args.arch,
                 'state_dict': net_i.state_dict(),
                 'best_prec1': best_prec1,
                 'optimizer': optimizer_i.state_dict(),
@@ -143,7 +143,7 @@ def train(train_loader, net_i, optimizer, device, loss_module, epoch, stat_log=N
 
     end = time.time()
     for i, (img_s, label_s) in enumerate(train_loader):
-        batch_size = img_s.size(0)
+        img_s = img_s.cuda(device=device, non_blocking=True)
         label_s = label_s.cuda(device=device, non_blocking=True)
 
         # compute output

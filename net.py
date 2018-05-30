@@ -1,8 +1,9 @@
-import torchvision.models as models
-import torch
-import torch.nn as nn
 import math
 
+import torch
+import torch.nn as nn
+import torchvision.models as models
+import snlayers as sn
 
 class NetIdentifierResNet34(nn.Module):
 
@@ -134,20 +135,7 @@ class NetAttributeResNet34(nn.Module):
         return mean, log_variance
 
 
-class PixelNorm(nn.Module):
-    def __init__(self, eps=1e-8):
-        super().__init__()
-        self.eps = eps
-
-    def forward(self, x):
-        return x * torch.rsqrt(torch.mean(x ** 2, dim=1, keepdim=True) + 1e-8)
-
-    def __repr__(self):
-        return self.__class__.__name__ + '(eps = %s)' % (self.eps)
-
-
 netG_act = nn.LeakyReLU
-netG_pn = PixelNorm
 
 
 class NetGenerator(nn.Module):
@@ -155,17 +143,16 @@ class NetGenerator(nn.Module):
     def __init__(self, id_size=4, id_channels=512, attr_size=1024):
         super().__init__()
         self.act = netG_act()
-        self.pn = netG_pn()
-        self.pn2 = netG_pn()
+        self.bn1 = nn.BatchNorm2d(512)
+        self.bn2 = nn.BatchNorm2d(512)
         self.fc_attr = nn.Linear(attr_size, id_channels * id_size * id_size)
         self.after_concat = nn.Sequential(*[
-            netG_pn(),
             nn.ConvTranspose2d(id_channels * 2, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
             netG_act(),
-            netG_pn(),
             nn.ConvTranspose2d(512, 512, 3, padding=1),
-            netG_act(),
-            netG_pn()
+            nn.BatchNorm2d(512),
+            netG_act()
         ])
         self.layer1 = self._make_layer(3, 512, 512)
         self.layer2 = self._make_layer(3, 512, 256)
@@ -173,30 +160,34 @@ class NetGenerator(nn.Module):
         self.layer4 = self._make_layer(3, 128, 96)
         self.layer5 = self._make_layer(3, 96, 64)
         self.torgb = nn.Conv2d(64, 3, 5, padding=2)
+        self.tanh = nn.Tanh()
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def _make_layer(self, conv_kernel_size, in_channels, out_channels):
         layers = [
             nn.Upsample(scale_factor=2),
             nn.ConvTranspose2d(in_channels, out_channels, conv_kernel_size, padding=(conv_kernel_size - 1) // 2),
+            nn.BatchNorm2d(out_channels),
             netG_act(),
-            netG_pn(),
             nn.Conv2d(out_channels, out_channels, 1),
-            netG_act(),
-            netG_pn()
+            nn.BatchNorm2d(out_channels),
+            netG_act()
         ]
         return nn.Sequential(*layers)
 
     def forward(self, id_feature, attr_feature):
         x = self.fc_attr(attr_feature)
         x = x.view(*id_feature.size())
+        x = self.bn1(x)
         x = self.act(x)
-        x = self.pn(x)
-        x = torch.cat([self.pn2(id_feature), x], dim=1)
+        x = torch.cat([self.bn2(id_feature), x], dim=1)
         x = self.after_concat(x)
 
         x = self.layer1(x)
@@ -205,6 +196,7 @@ class NetGenerator(nn.Module):
         x = self.layer4(x)
         x = self.layer5(x)
         x = self.torgb(x)
+        x = self.tanh(x)
 
         return x
 
@@ -217,7 +209,7 @@ class NetDiscriminator(nn.Module):
     def __init__(self, last_feature_size=4):
         super().__init__()
         self.fromrgb = nn.Sequential(*[
-            nn.Conv2d(3, 64, 1),
+            sn.SNConv2d(3, 64, 1),
             netD_act()
         ])
         self.layer1 = self._make_layer(3, 64, 96)
@@ -225,20 +217,20 @@ class NetDiscriminator(nn.Module):
         self.layer3 = self._make_layer(3, 128, 256)
         self.layer4 = self._make_layer(3, 256, 512)
         self.layer5 = self._make_layer(3, 512, 512)
-        self.last_feature_conv = nn.Conv2d(512, 512, 3, padding=1)
-        self.fc1 = nn.Linear(512 * last_feature_size * last_feature_size, 512)
-        self.fc2 = nn.Linear(512, 1)
+        self.last_feature_conv = sn.SNConv2d(512, 512, 3, padding=1)
+        self.fc1 = sn.SNLinear(512 * last_feature_size * last_feature_size, 512)
+        self.fc2 = sn.SNLinear(512, 1)
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            if isinstance(m, sn.SNConv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
 
     def _make_layer(self, conv_kernel_size, in_channels, out_channels):
         layers = [
-            nn.Conv2d(in_channels, in_channels, conv_kernel_size, padding=(conv_kernel_size - 1) // 2),
+            sn.SNConv2d(in_channels, in_channels, conv_kernel_size, padding=(conv_kernel_size - 1) // 2),
             netD_act(),
-            nn.Conv2d(in_channels, out_channels, conv_kernel_size, padding=(conv_kernel_size - 1) // 2),
+            sn.SNConv2d(in_channels, out_channels, conv_kernel_size, padding=(conv_kernel_size - 1) // 2),
             netD_act(),
             nn.AvgPool2d(2, 2)
         ]
