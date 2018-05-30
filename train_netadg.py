@@ -178,6 +178,7 @@ def train_onebatch(device, train_sampler, nets, is_gen, log_img=False):
         img_a, _ = train_sampler.next()
     img_s = img_s.cuda(device)
     img_a = img_a.cuda(device)
+    batch_size = img_s.size(0)
 
     optimizer_a.zero_grad()
     optimizer_g.zero_grad()
@@ -187,11 +188,11 @@ def train_onebatch(device, train_sampler, nets, is_gen, log_img=False):
 
     mean, log_variance = net_a(img_a)
     variance = torch.exp(log_variance)
-    loss_n01 = torch.sum(mean ** 2) + torch.sum(variance - log_variance - 1)
+    loss_n01 = (torch.sum(mean ** 2) + torch.sum(variance - log_variance - 1)) / batch_size
 
     latent_attr_a = mean + torch.randn_like(log_variance) * torch.sqrt(variance)
     img_g = net_g(id_s_data, latent_attr_a)
-    loss_rec = torch.norm(img_a - img_g, 2) * weight_reconstruction
+    loss_rec = torch.sum((img_a - img_g) ** 2) / batch_size * weight_reconstruction
 
     loss_net_a = loss_n01 + loss_rec
     loss_net_a.backward()
@@ -199,7 +200,7 @@ def train_onebatch(device, train_sampler, nets, is_gen, log_img=False):
     latent_attr_a = latent_attr_a.detach()
     img_g = net_g(id_s_data, latent_attr_a)
     cls_prob_a, id_g, feature_gc_g = net_i(img_g)
-    loss_gc = torch.norm(feature_gc_g - feature_gc_s_data, 2)
+    loss_gc = torch.sum((feature_gc_g - feature_gc_s_data) ** 2) / batch_size
 
     # feature_gd_g = net_d(img_g)[1]
     # feature_gd_a = net_d(img_a)[1]
